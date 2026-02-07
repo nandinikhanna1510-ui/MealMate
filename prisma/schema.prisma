@@ -1,0 +1,132 @@
+// Prisma Schema for MealMate
+// Using PostgreSQL for production (Vercel/Neon)
+// For local development with SQLite, use: DATABASE_URL="file:./dev.db" and change provider to "sqlite"
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// User model - stores app users
+model User {
+  id            String    @id @default(uuid())
+  phone         String    @unique
+  name          String?
+  email         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  otpCodes      OtpCode[]
+  swiggySession SwiggySession?
+  orders        Order[]
+  mealPlans     MealPlan[]
+
+  @@index([phone])
+}
+
+// OTP codes for phone verification
+model OtpCode {
+  id        String   @id @default(uuid())
+  userId    String
+  code      String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([code])
+}
+
+// Swiggy OAuth session - stores user's Swiggy authentication
+model SwiggySession {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  swiggyUserId  String?   // Swiggy's internal user ID
+  swiggyPhone   String?   // Phone number used for Swiggy (may differ from MealMate)
+  accessToken   String    // Encrypted in production
+  refreshToken  String?   // Encrypted in production
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  addresses     SwiggyAddress[]
+}
+
+// Swiggy delivery addresses - cached from Swiggy account
+model SwiggyAddress {
+  id              String    @id @default(uuid())
+  swiggySessionId String
+  swiggyAddressId String    // Swiggy's address ID
+  label           String?   // "Home", "Work", etc.
+  addressLine1    String
+  addressLine2    String?
+  city            String
+  pincode         String
+  latitude        Float?
+  longitude       Float?
+  isDefault       Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  swiggySession   SwiggySession @relation(fields: [swiggySessionId], references: [id], onDelete: Cascade)
+
+  @@index([swiggySessionId])
+}
+
+// Orders placed through MealMate
+model Order {
+  id                String    @id @default(uuid())
+  userId            String
+  status            String    @default("PENDING")
+  groceryItems      String    // JSON string of items
+  totalItems        Int
+  estimatedTotal    Float?
+  swiggyOrderId     String?   // Order ID from Swiggy
+  swiggyCartId      String?   // Cart ID from Swiggy
+  deliveryAddressId String?   // Selected Swiggy address ID
+  allergenWarnings  String?   // JSON string of allergen warnings
+  errorMessage      String?
+
+  // Order completion fields
+  paymentMethod     String?   // 'COD', 'PREPAID', etc.
+  orderPlacedAt     DateTime? // When order was actually placed with Swiggy
+  estimatedDelivery String?   // "30-45 mins" from Swiggy
+  deliveryAddress   String?   // Full address text for confirmation display
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+}
+
+// Meal plans saved by users
+model MealPlan {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String   @default("My Meal Plan")
+  weekData  String   // JSON string of the meal plan
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
