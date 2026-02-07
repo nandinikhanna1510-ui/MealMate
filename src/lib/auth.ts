@@ -23,8 +23,16 @@ export function verifyToken(token: string): JWTPayload | null {
   }
 }
 
-// Generate random OTP
+// Generate OTP
+// In mock/demo mode, always use "123456" for easy testing
+// In production, generate a random 6-digit code
 export function generateOTP(): string {
+  const otpService = process.env.OTP_SERVICE || 'mock';
+
+  if (otpService === 'mock') {
+    return '123456'; // Fixed OTP for demo mode
+  }
+
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 

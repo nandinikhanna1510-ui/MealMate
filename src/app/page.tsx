@@ -445,11 +445,7 @@ export default function Home() {
             {activeTab === 'groceries' && (
               <GroceryList
                 items={groceryItems}
-                onOrderNow={handleOrderNow}
-                isSwiggyConnected={isSwiggyConnected}
-                onConnectSwiggy={handleConnectSwiggy}
-                isAuthenticated={isAuthenticated}
-                onLogin={handleLoginForOrdering}
+                familySize={preferences.familySize}
               />
             )}
           </div>
