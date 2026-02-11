@@ -7,7 +7,10 @@ import { GroceryItem } from '@/types';
 
 // Conversation states
 export type OrderingState =
-  | 'WELCOME'
+  | 'CHECKING_CONNECTION'  // Checking if Swiggy is connected
+  | 'SWIGGY_LOGIN'         // Show phone input
+  | 'SWIGGY_OTP'           // Show OTP input
+  | 'WELCOME'              // Show addresses (user is connected)
   | 'ADDRESS_SELECT'
   | 'CART_REVIEW'
   | 'EDIT_CART'
@@ -153,15 +156,76 @@ export function formatCartSummary(items: GroceryItem[]): string {
 }
 
 /**
- * Generate welcome message
+ * Generate checking connection message
  */
-export function generateWelcomeMessage(items: GroceryItem[], familySize: number): ChatMessage {
+export function generateCheckingConnectionMessage(): ChatMessage {
+  return {
+    id: generateMessageId(),
+    role: 'bot',
+    content: `🔄 Checking your Swiggy connection...`,
+    timestamp: new Date(),
+  };
+}
+
+/**
+ * Generate Swiggy login message
+ */
+export function generateSwiggyLoginMessage(): ChatMessage {
+  return {
+    id: generateMessageId(),
+    role: 'bot',
+    content: `📱 **Connect your Swiggy account**
+
+To order groceries, please login with your Swiggy phone number.
+
+This will fetch your saved delivery addresses from Swiggy.`,
+    timestamp: new Date(),
+    actions: [], // Phone input will be shown separately in UI
+  };
+}
+
+/**
+ * Generate OTP input message
+ */
+export function generateOtpMessage(phone: string): ChatMessage {
+  return {
+    id: generateMessageId(),
+    role: 'bot',
+    content: `📲 OTP sent to **${phone}**
+
+Please enter the 6-digit OTP to verify your Swiggy account.`,
+    timestamp: new Date(),
+    actions: [], // OTP input will be shown separately in UI
+  };
+}
+
+/**
+ * Generate welcome message with real addresses
+ */
+export function generateWelcomeMessage(
+  items: GroceryItem[],
+  familySize: number,
+  addresses: DeliveryAddress[] = DEMO_ADDRESSES
+): ChatMessage {
   const grouped = groupItemsByCategory(items);
   const estimate = calculateEstimate(items);
 
   const categorySummary = Object.entries(grouped)
     .map(([cat, catItems]) => `• ${catItems.length} ${cat.charAt(0).toUpperCase() + cat.slice(1)}`)
     .join('\n');
+
+  // Generate address buttons from provided addresses
+  const addressActions = addresses.map(addr => {
+    const icon = addr.label?.toLowerCase() === 'home' ? '🏠' :
+                 addr.label?.toLowerCase() === 'work' || addr.label?.toLowerCase() === 'office' ? '🏢' : '📍';
+    return {
+      id: `select_${addr.id}`,
+      label: `${icon} ${addr.label || 'Address'}`,
+      variant: addr.isDefault ? 'primary' as const : 'secondary' as const,
+      action: 'SELECT_ADDRESS',
+      data: { addressId: addr.id },
+    };
+  });
 
   return {
     id: generateMessageId(),
@@ -175,21 +239,7 @@ Estimated total: **₹${estimate.min} - ₹${estimate.max}**
 
 Where should I deliver your groceries? 🏠`,
     timestamp: new Date(),
-    actions: [
-      ...DEMO_ADDRESSES.map(addr => ({
-        id: `select_${addr.id}`,
-        label: `${addr.label === 'Home' ? '🏠' : '🏢'} ${addr.label}`,
-        variant: addr.isDefault ? 'primary' as const : 'secondary' as const,
-        action: 'SELECT_ADDRESS',
-        data: { addressId: addr.id },
-      })),
-      {
-        id: 'new_address',
-        label: '📍 New Address',
-        variant: 'secondary',
-        action: 'NEW_ADDRESS',
-      },
-    ],
+    actions: addressActions,
   };
 }
 
@@ -415,14 +465,50 @@ export function generateCancelMessage(): ChatMessage {
 }
 
 /**
- * Initialize order state
+ * Initialize order state - starts with checking connection
  */
 export function initializeOrderState(items: GroceryItem[], familySize: number): OrderState {
-  const welcomeMessage = generateWelcomeMessage(items, familySize);
+  const checkingMessage = generateCheckingConnectionMessage();
+
+  return {
+    currentState: 'CHECKING_CONNECTION',
+    messages: [checkingMessage],
+    groceryItems: items,
+    selectedAddress: null,
+    familySize,
+    estimatedTotal: calculateEstimate(items),
+  };
+}
+
+/**
+ * Initialize order state with addresses (user is already connected)
+ */
+export function initializeOrderStateWithAddresses(
+  items: GroceryItem[],
+  familySize: number,
+  addresses: DeliveryAddress[]
+): OrderState {
+  const welcomeMessage = generateWelcomeMessage(items, familySize, addresses);
 
   return {
     currentState: 'WELCOME',
     messages: [welcomeMessage],
+    groceryItems: items,
+    selectedAddress: null,
+    familySize,
+    estimatedTotal: calculateEstimate(items),
+  };
+}
+
+/**
+ * Initialize order state for login (user needs to connect Swiggy)
+ */
+export function initializeOrderStateForLogin(items: GroceryItem[], familySize: number): OrderState {
+  const loginMessage = generateSwiggyLoginMessage();
+
+  return {
+    currentState: 'SWIGGY_LOGIN',
+    messages: [loginMessage],
     groceryItems: items,
     selectedAddress: null,
     familySize,

@@ -4,12 +4,12 @@ import { useState, useEffect, useRef } from 'react';
 import { GroceryItem } from '@/types';
 import {
   OrderState,
-  OrderingState,
   ChatMessage,
   QuickAction,
   DeliveryAddress,
-  DEMO_ADDRESSES,
   initializeOrderState,
+  initializeOrderStateWithAddresses,
+  initializeOrderStateForLogin,
   generateUserMessage,
   generateAddressConfirmMessage,
   generateProcessingMessage,
@@ -17,7 +17,8 @@ import {
   generateEditCartMessage,
   generateCancelMessage,
   generateFinalClaudePrompt,
-  calculateEstimate,
+  generateWelcomeMessage,
+  generateOtpMessage,
 } from '@/lib/ordering-flow';
 
 interface OrderingChatModalProps {
@@ -36,13 +37,20 @@ export function OrderingChatModal({
   const [orderState, setOrderState] = useState<OrderState | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [addresses, setAddresses] = useState<DeliveryAddress[]>([]);
+
+  // Swiggy login state
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [otpCode, setOtpCode] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [loginError, setLoginError] = useState('');
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Initialize state when modal opens
+  // Initialize state when modal opens - check Swiggy connection
   useEffect(() => {
     if (isOpen && groceryItems.length > 0) {
-      setOrderState(initializeOrderState(groceryItems, familySize));
-      setPromptCopied(false);
+      checkSwiggyConnection();
     }
   }, [isOpen, groceryItems, familySize]);
 
@@ -51,6 +59,175 @@ export function OrderingChatModal({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [orderState?.messages]);
 
+  // Check if user is connected to Swiggy
+  const checkSwiggyConnection = async () => {
+    setOrderState(initializeOrderState(groceryItems, familySize));
+    setPromptCopied(false);
+    setPhoneNumber('');
+    setOtpCode('');
+    setLoginError('');
+
+    try {
+      const res = await fetch('/api/swiggy/addresses');
+      const data = await res.json();
+
+      if (res.ok && data.addresses && data.addresses.length > 0) {
+        // User is connected - show addresses
+        const mappedAddresses: DeliveryAddress[] = data.addresses.map((addr: {
+          swiggyAddressId?: string;
+          id: string;
+          label?: string;
+          addressLine1: string;
+          city: string;
+          pincode: string;
+          isDefault?: boolean;
+        }) => ({
+          id: addr.swiggyAddressId || addr.id,
+          label: addr.label || 'Address',
+          address: addr.addressLine1,
+          city: addr.city,
+          pincode: addr.pincode,
+          isDefault: addr.isDefault || false,
+        }));
+
+        setAddresses(mappedAddresses);
+        setOrderState(initializeOrderStateWithAddresses(groceryItems, familySize, mappedAddresses));
+      } else {
+        // User not connected - show login
+        setOrderState(initializeOrderStateForLogin(groceryItems, familySize));
+      }
+    } catch (error) {
+      console.error('Failed to check Swiggy connection:', error);
+      // Show login on error
+      setOrderState(initializeOrderStateForLogin(groceryItems, familySize));
+    }
+  };
+
+  // Send OTP to phone number
+  const handleSendOtp = async () => {
+    if (!phoneNumber || phoneNumber.length !== 10) {
+      setLoginError('Please enter a valid 10-digit phone number');
+      return;
+    }
+
+    setIsLoading(true);
+    setLoginError('');
+
+    try {
+      const res = await fetch('/api/swiggy/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: `+91${phoneNumber}` }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        // Move to OTP state
+        const userMsg = generateUserMessage(`+91 ${phoneNumber}`);
+        const otpMsg = generateOtpMessage(`+91 ${phoneNumber}`);
+
+        setOrderState(prev => prev ? {
+          ...prev,
+          currentState: 'SWIGGY_OTP',
+          messages: [...prev.messages, userMsg, otpMsg],
+        } : null);
+      } else {
+        setLoginError(data.error || 'Failed to send OTP. Please try again.');
+      }
+    } catch (error) {
+      console.error('Failed to send OTP:', error);
+      setLoginError('Network error. Please try again.');
+    }
+
+    setIsLoading(false);
+  };
+
+  // Verify OTP and fetch addresses
+  const handleVerifyOtp = async () => {
+    if (!otpCode || otpCode.length !== 6) {
+      setLoginError('Please enter a valid 6-digit OTP');
+      return;
+    }
+
+    setIsLoading(true);
+    setLoginError('');
+
+    try {
+      const res = await fetch('/api/swiggy/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: `+91${phoneNumber}`,
+          otp: otpCode,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        // OTP verified - fetch addresses
+        const userMsg = generateUserMessage(`OTP: ${otpCode}`);
+
+        setOrderState(prev => prev ? {
+          ...prev,
+          messages: [...prev.messages, userMsg],
+        } : null);
+
+        // Fetch addresses after verification
+        const addressRes = await fetch('/api/swiggy/addresses?refresh=true');
+        const addressData = await addressRes.json();
+
+        if (addressData.addresses && addressData.addresses.length > 0) {
+          const mappedAddresses: DeliveryAddress[] = addressData.addresses.map((addr: {
+            swiggyAddressId?: string;
+            id: string;
+            label?: string;
+            addressLine1: string;
+            city: string;
+            pincode: string;
+            isDefault?: boolean;
+          }) => ({
+            id: addr.swiggyAddressId || addr.id,
+            label: addr.label || 'Address',
+            address: addr.addressLine1,
+            city: addr.city,
+            pincode: addr.pincode,
+            isDefault: addr.isDefault || false,
+          }));
+
+          setAddresses(mappedAddresses);
+
+          // Show success and addresses
+          setIsTyping(true);
+          setTimeout(() => {
+            const welcomeMsg = generateWelcomeMessage(groceryItems, familySize, mappedAddresses);
+            setOrderState(prev => prev ? {
+              ...prev,
+              currentState: 'WELCOME',
+              messages: [...prev.messages, {
+                id: `msg_${Date.now()}`,
+                role: 'bot',
+                content: '✅ **Connected to Swiggy!**\n\nYour saved addresses are ready.',
+                timestamp: new Date(),
+              }, welcomeMsg],
+            } : null);
+            setIsTyping(false);
+          }, 500);
+        } else {
+          setLoginError('No addresses found. Please add an address in the Swiggy app first.');
+        }
+      } else {
+        setLoginError(data.error || 'Invalid OTP. Please try again.');
+      }
+    } catch (error) {
+      console.error('Failed to verify OTP:', error);
+      setLoginError('Network error. Please try again.');
+    }
+
+    setIsLoading(false);
+  };
+
   // Handle action button clicks
   const handleAction = async (action: QuickAction) => {
     if (!orderState) return;
@@ -58,16 +235,10 @@ export function OrderingChatModal({
     switch (action.action) {
       case 'SELECT_ADDRESS': {
         const addressId = action.data?.addressId as string;
-        const address = DEMO_ADDRESSES.find(a => a.id === addressId);
+        const address = addresses.find(a => a.id === addressId);
         if (address) {
           await selectAddress(address, action.label);
         }
-        break;
-      }
-
-      case 'NEW_ADDRESS': {
-        // For now, show a message that this feature is coming soon
-        addBotMessage("📍 Custom address entry coming soon! For now, please select one of the saved addresses above.");
         break;
       }
 
@@ -118,7 +289,6 @@ export function OrderingChatModal({
       }
 
       case 'SHOW_REMOVE_OPTIONS': {
-        // Show items that can be removed
         addBotMessage(`Select an item to remove:\n\n${orderState.groceryItems.map((item, i) => `${i + 1}. ${item.name}`).join('\n')}\n\n(This feature is simplified - use the Grocery List edit mode for full control)`);
         break;
       }
@@ -149,7 +319,6 @@ export function OrderingChatModal({
 
   // Select address and move to cart review
   const selectAddress = async (address: DeliveryAddress, label: string) => {
-    // Add user's selection
     const userMsg = generateUserMessage(label);
     setOrderState(prev => prev ? {
       ...prev,
@@ -157,10 +326,8 @@ export function OrderingChatModal({
       selectedAddress: address,
     } : null);
 
-    // Show typing indicator
     setIsTyping(true);
 
-    // After a brief delay, show cart confirmation
     setTimeout(() => {
       const confirmMsg = generateAddressConfirmMessage(
         address,
@@ -180,7 +347,6 @@ export function OrderingChatModal({
   const handlePlaceOrder = async () => {
     if (!orderState?.selectedAddress) return;
 
-    // Add user confirmation
     const userMsg = generateUserMessage('✅ Place Order');
     setOrderState(prev => prev ? {
       ...prev,
@@ -190,7 +356,6 @@ export function OrderingChatModal({
 
     setIsTyping(true);
 
-    // Generate and copy the prompt
     const prompt = generateFinalClaudePrompt(
       orderState.groceryItems,
       orderState.selectedAddress,
@@ -204,7 +369,6 @@ export function OrderingChatModal({
       console.error('Failed to copy prompt:', err);
     }
 
-    // Show processing then handoff message
     setTimeout(() => {
       const processingMsg = generateProcessingMessage();
       setOrderState(prev => prev ? {
@@ -277,6 +441,23 @@ export function OrderingChatModal({
     }
   };
 
+  // Get status text
+  const getStatusText = () => {
+    if (!orderState) return '';
+    switch (orderState.currentState) {
+      case 'CHECKING_CONNECTION': return 'Checking Swiggy connection...';
+      case 'SWIGGY_LOGIN': return 'Enter your phone number';
+      case 'SWIGGY_OTP': return 'Enter OTP';
+      case 'WELCOME': return 'Select delivery address';
+      case 'CART_REVIEW': return 'Review your order';
+      case 'EDIT_CART': return 'Editing cart';
+      case 'PROCESSING': return 'Processing...';
+      case 'HANDOFF': return 'Ready for Claude';
+      case 'COMPLETE': return 'Order complete';
+      default: return '';
+    }
+  };
+
   if (!isOpen || !orderState) return null;
 
   return (
@@ -321,10 +502,8 @@ export function OrderingChatModal({
                     : 'bg-white text-gray-800 shadow-sm border border-gray-100 rounded-bl-md'
                 }`}
               >
-                {/* Message content with markdown-style formatting */}
                 <div className="text-sm whitespace-pre-wrap">
                   {message.content.split('\n').map((line, i) => {
-                    // Bold text
                     const formattedLine = line.replace(
                       /\*\*(.*?)\*\*/g,
                       '<strong>$1</strong>'
@@ -339,7 +518,6 @@ export function OrderingChatModal({
                   })}
                 </div>
 
-                {/* Action buttons */}
                 {message.actions && message.actions.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {message.actions.map((action) => (
@@ -379,6 +557,73 @@ export function OrderingChatModal({
           <div ref={messagesEndRef} />
         </div>
 
+        {/* Phone/OTP Input Section */}
+        {(orderState.currentState === 'SWIGGY_LOGIN' || orderState.currentState === 'SWIGGY_OTP') && (
+          <div className="p-4 bg-white border-t border-gray-100">
+            {orderState.currentState === 'SWIGGY_LOGIN' ? (
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  <div className="flex items-center bg-gray-100 px-3 rounded-l-xl border border-r-0 border-gray-200">
+                    <span className="text-gray-600 text-sm">+91</span>
+                  </div>
+                  <input
+                    type="tel"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    placeholder="Enter phone number"
+                    className="flex-1 px-4 py-3 border border-gray-200 rounded-r-xl text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    maxLength={10}
+                  />
+                </div>
+                {loginError && (
+                  <p className="text-red-500 text-xs">{loginError}</p>
+                )}
+                <button
+                  onClick={handleSendOtp}
+                  disabled={isLoading || phoneNumber.length !== 10}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? 'Sending OTP...' : 'Send OTP'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="Enter 6-digit OTP"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm text-center text-2xl tracking-widest focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  maxLength={6}
+                />
+                {loginError && (
+                  <p className="text-red-500 text-xs">{loginError}</p>
+                )}
+                <button
+                  onClick={handleVerifyOtp}
+                  disabled={isLoading || otpCode.length !== 6}
+                  className="w-full py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? 'Verifying...' : 'Verify OTP'}
+                </button>
+                <button
+                  onClick={() => {
+                    setOrderState(prev => prev ? {
+                      ...prev,
+                      currentState: 'SWIGGY_LOGIN',
+                    } : null);
+                    setOtpCode('');
+                    setLoginError('');
+                  }}
+                  className="w-full py-2 text-gray-600 text-sm hover:text-gray-900"
+                >
+                  ← Change phone number
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Footer with status */}
         <div className="p-3 bg-white border-t border-gray-100 flex-shrink-0">
           <div className="flex items-center justify-between">
@@ -388,16 +633,11 @@ export function OrderingChatModal({
                   ? 'bg-yellow-400 animate-pulse'
                   : orderState.currentState === 'HANDOFF' || orderState.currentState === 'COMPLETE'
                   ? 'bg-green-400'
+                  : orderState.currentState === 'CHECKING_CONNECTION'
+                  ? 'bg-yellow-400 animate-pulse'
                   : 'bg-purple-400'
               }`} />
-              <span>
-                {orderState.currentState === 'WELCOME' && 'Select delivery address'}
-                {orderState.currentState === 'CART_REVIEW' && 'Review your order'}
-                {orderState.currentState === 'EDIT_CART' && 'Editing cart'}
-                {orderState.currentState === 'PROCESSING' && 'Processing...'}
-                {orderState.currentState === 'HANDOFF' && 'Ready for Claude'}
-                {orderState.currentState === 'COMPLETE' && 'Order complete'}
-              </span>
+              <span>{getStatusText()}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400">Powered by</span>
