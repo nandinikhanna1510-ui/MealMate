@@ -245,7 +245,7 @@ export function MealCalendar({
                           </div>
                           <button
                             onClick={() => onRemoveMeal(day.dateKey, mealType)}
-                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 flex items-center justify-center shadow-md"
+                            className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity hover:bg-red-600 flex items-center justify-center shadow-md"
                             title="Remove meal"
                           >
                             ×

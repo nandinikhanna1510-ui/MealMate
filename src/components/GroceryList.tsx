@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { GroceryItem } from '@/types';
 import { SwiggyHandoffModal } from './SwiggyHandoffModal';
+import { OrderingChatModal } from './OrderingChatModal';
 
 interface EditableGroceryItem extends GroceryItem {
   id: string;
@@ -30,6 +31,7 @@ export function GroceryList({
   const [newItemUnit, setNewItemUnit] = useState('');
   const [newItemCategory, setNewItemCategory] = useState('other');
   const [showHandoffModal, setShowHandoffModal] = useState(false);
+  const [showOrderingChat, setShowOrderingChat] = useState(false);
 
   // Initialize editable items when items change
   useEffect(() => {
@@ -430,32 +432,45 @@ export function GroceryList({
 
         {/* Order Section */}
         <div className="p-4 border-t border-gray-100 bg-gradient-to-b from-gray-50 to-white">
-          {/* Order Button - Simple Swiggy Handoff */}
+          {/* Primary Order Button - Chat Interface */}
           <button
-            onClick={() => setShowHandoffModal(true)}
+            onClick={() => setShowOrderingChat(true)}
             disabled={allActiveItems.length === 0}
-            className="w-full py-4 px-4 bg-gradient-to-r from-orange-500 to-orange-600 text-white rounded-xl font-semibold hover:from-orange-600 hover:to-orange-700 transition-all shadow-lg shadow-orange-500/25 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-4 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-semibold hover:from-purple-700 hover:to-indigo-700 transition-all shadow-lg shadow-purple-500/25 flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <span className="text-xl">🛍️</span>
+            <span className="text-xl">🛒</span>
             <span className="text-lg">Order on Swiggy Instamart</span>
           </button>
 
-          {/* Subtext */}
-          <p className="text-center text-xs text-gray-500 mt-3">
-            Copy your list and order directly on Swiggy
-          </p>
+          {/* Secondary Option - Manual Copy */}
+          <button
+            onClick={() => setShowHandoffModal(true)}
+            disabled={allActiveItems.length === 0}
+            className="w-full mt-2 py-2 px-4 text-gray-600 hover:text-gray-900 text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <span>📋</span>
+            <span>Copy list manually instead</span>
+          </button>
 
           {/* Powered By */}
           <div className="flex items-center justify-center gap-2 mt-4 pt-4 border-t border-gray-100">
             <span className="text-xs text-gray-400">Powered by</span>
             <span className="text-xs font-medium text-orange-600">Swiggy Instamart</span>
             <span className="text-xs text-gray-400">+</span>
-            <span className="text-xs font-medium text-teal-600">Claude AI</span>
+            <span className="text-xs font-medium text-purple-600">Claude AI</span>
           </div>
         </div>
       </div>
 
-      {/* Swiggy Handoff Modal */}
+      {/* Ordering Chat Modal (Primary) */}
+      <OrderingChatModal
+        isOpen={showOrderingChat}
+        onClose={() => setShowOrderingChat(false)}
+        groceryItems={allActiveItems}
+        familySize={familySize}
+      />
+
+      {/* Swiggy Handoff Modal (Secondary - Manual) */}
       <SwiggyHandoffModal
         isOpen={showHandoffModal}
         onClose={() => setShowHandoffModal(false)}

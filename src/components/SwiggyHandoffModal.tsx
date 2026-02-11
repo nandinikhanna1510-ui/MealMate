@@ -65,7 +65,7 @@ export function SwiggyHandoffModal({
     return text;
   };
 
-  // Generate Claude prompt for Swiggy MCP
+  // Generate Claude prompt for Swiggy MCP - optimized for batching to avoid timeouts
   const generateClaudePrompt = () => {
     const grouped = groceryItems.reduce((acc, item) => {
       if (!acc[item.category]) acc[item.category] = [];
@@ -73,31 +73,45 @@ export function SwiggyHandoffModal({
       return acc;
     }, {} as Record<string, GroceryItem[]>);
 
-    let prompt = `Hi Claude! Please help me order groceries from Swiggy Instamart using your connected Swiggy MCP.
+    const totalItems = groceryItems.length;
+    const isLargeList = totalItems > 10;
 
-**Family Size:** ${familySize} people
-**Total Items:** ${groceryItems.length}
+    let prompt = `I need to order groceries from Swiggy Instamart for ${familySize} people.
 
-**Shopping List:**
+**Shopping List (${totalItems} items):**
 `;
 
+    // Format items in a compact way - category: item1, item2, item3
     Object.entries(grouped).forEach(([category, items]) => {
       const emoji = getCategoryEmoji(category);
-      prompt += `\n${emoji} **${category.charAt(0).toUpperCase() + category.slice(1)}:**\n`;
-      items.forEach(item => {
-        prompt += `   - ${item.name}: ${item.quantity} ${item.unit}\n`;
-      });
+      const itemList = items.map(item => `${item.name} (${item.quantity}${item.unit})`).join(', ');
+      prompt += `\n${emoji} **${category.charAt(0).toUpperCase() + category.slice(1)}:** ${itemList}`;
     });
 
-    prompt += `
-**Instructions:**
-1. Search for each item on Swiggy Instamart
-2. Add the best matching product to my cart (prefer items in stock)
-3. Match quantities as closely as possible
-4. If an exact item isn't found, pick a close alternative
-5. After adding all items, show me the cart summary with total
+    // Add optimized instructions for large lists
+    if (isLargeList) {
+      prompt += `
 
-Please proceed with building my cart!`;
+**IMPORTANT - Large Order Instructions:**
+1. Process items by CATEGORY (not one-by-one) to avoid timeouts
+2. Search for 2-3 items together when possible (e.g., "onion tomato potato")
+3. Add items in batches, then move to next category
+4. If an item isn't found after 1 search, skip it and note it
+5. Show a brief summary after each category is done
+6. At the end, show the final cart with total
+
+Start with ${Object.keys(grouped)[0]} items first.`;
+    } else {
+      prompt += `
+
+**Instructions:**
+1. Search and add each item to my cart
+2. Pick in-stock items, match quantities closely
+3. Skip items not found after 1 attempt
+4. Show cart summary when done
+
+Please build my cart!`;
+    }
 
     return prompt;
   };
